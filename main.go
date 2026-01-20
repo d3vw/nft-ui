@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -27,8 +28,14 @@ func main() {
 	// Initialize NFT manager
 	nftMgr := NewNFTManager(cfg)
 
+	// Initialize token generator (may be nil if not configured)
+	var tokenGen *TokenGenerator
+	if cfg.TokenSalt != "" {
+		tokenGen = NewTokenGenerator(cfg.TokenSalt)
+	}
+
 	// Initialize handler
-	handler := NewHandler(nftMgr, cfg, logger)
+	handler := NewHandler(nftMgr, cfg, logger, tokenGen)
 
 	// Create Echo instance
 	e := echo.New()
@@ -42,14 +49,26 @@ func main() {
 		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete},
 	}))
 
-	// API routes
+	// Public API routes (NO AUTH) - must be registered BEFORE auth middleware
+	if cfg.TokenEnabled() {
+		public := e.Group("/api/v1/public")
+		public.Use(RateLimitMiddleware(100, time.Minute)) // 100 requests per minute per IP
+		public.GET("/query/:token", handler.QueryByToken)
+		logger.Printf("Public query endpoint enabled at /api/v1/public/query/:token")
+	}
+
+	// Protected API routes (with auth)
 	api := e.Group("/api/v1")
 	api.Use(BasicAuthMiddleware(cfg))
 	api.Use(ReadOnlyMiddleware(cfg))
 	api.Use(AuditLogMiddleware(logger))
 
-	// Register API endpoints
-	api.GET("/quotas", handler.ListQuotas)
+	// Register API endpoints - use token-enhanced version if tokens are configured
+	if cfg.TokenSalt != "" {
+		api.GET("/quotas", handler.ListQuotasWithTokens)
+	} else {
+		api.GET("/quotas", handler.ListQuotas)
+	}
 	api.POST("/quotas/:id/reset", handler.ResetQuota)
 	api.POST("/quotas/batch-reset", handler.BatchResetQuotas)
 	api.PUT("/quotas/:id", handler.ModifyQuota)
@@ -64,8 +83,8 @@ func main() {
 	setupFrontend(e)
 
 	// Start server
-	logger.Printf("Starting server on %s (read_only=%v, auth=%v)",
-		cfg.ListenAddr, cfg.ReadOnly, cfg.AuthEnabled())
+	logger.Printf("Starting server on %s (read_only=%v, auth=%v, public_query=%v)",
+		cfg.ListenAddr, cfg.ReadOnly, cfg.AuthEnabled(), cfg.TokenEnabled())
 	e.Logger.Fatal(e.Start(cfg.ListenAddr))
 }
 
