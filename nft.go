@@ -607,9 +607,9 @@ func (n *NFTManager) AddAllowedPort(port int) error {
 		return err
 	}
 
-	// nft add rule inet filter input tcp dport <port> accept comment "nft-ui managed"
+	// nft insert rule inet filter input tcp dport <port> accept comment "nft-ui managed"
 	args := []string{
-		"add", "rule", n.tableFamily, n.tableName, "input",
+		"insert", "rule", n.tableFamily, n.tableName, "input",
 		"tcp", "dport", strconv.Itoa(port),
 		"accept",
 		"comment", fmt.Sprintf(`"%s"`, ManagedComment),
